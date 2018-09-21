@@ -48,16 +48,15 @@ begin
     nMinimalFoundInDay := 0;
   end;
 
-  bGenerateDetail := true;
+  bGenerateDetail := false;
   tdJsTemplate:= '';
   try
     if(aPar.Values['GenerateDetail'] = 'Yes') then begin
       Log('GenerateDetail='+aPar.Values['GenerateDetail']);
        bGenerateDetail := true;
-       
     end;
   except
-    bGenerateDetail := true;
+    bGenerateDetail := false;
   end;
 
   if bGenerateDetail then
