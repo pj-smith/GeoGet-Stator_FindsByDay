@@ -1,16 +1,19 @@
+
+
 //hlavni funkce modulu
 function FindsByDay_Run(aPar:TStringList):string;
 var
-  sOld,s,sStyle,sButtonId, sButtonBlock, sIdElement:string;
+  sOld,s,sStyle,sButtonId, sButtonBlock, sIdElement, tdJsTemplate:string;
   tab: TSqliteTable;
   a:array [0..12*31-1] of integer;
   aSumaMon:array[0..12] of integer; //soucet nalezu v kazdem z mesicu kalendarniho dne
                                     //aSumaMon[mesic]=suma(data[1-31,mesic]) a nalezu celkem
   aSumaDay:array[0..31] of integer; //soucet nalezu v kazdem z kalednarnich dni vsech mesicu
                                     //aSumaDay[den]=suma(data[den,1-12]) a nalezu celkem
-  i,n,dd,mm,nMax,nMaxMes,nMaxDen,nKombinaci,nMinimalFoundInDay, nFoundDaysInYear,nPosition:integer;
-  bCond,bDnySvisle,bGenerateAuto,bGenerateLabels,bExpanded,bBreakGenerate:boolean;
+  i,n,dd,mm,nMax,nMaxMes,nMaxDen,nKombinaci,nMinimalFoundInDay,nFoundDaysInYear,nPosition:integer;
+  bCond,bDnySvisle,bGenerateAuto,bGenerateLabels,bExpanded,bBreakGenerate,bGenerateDetail:boolean;
   aMonthName:array [0..11] of string;
+  aDdmmDetail:array [0..12*31-1] of string; // Detail GC dne
 begin
     
   
@@ -18,8 +21,7 @@ begin
     Output(ProcessCommand('CmdTitle',aPar))
   end;
   
-  Result:='';
-
+  
   nMinimalFoundInDay := 0;
   nFoundDaysInYear := 0;
   nPosition := 0;
@@ -46,11 +48,23 @@ begin
     nMinimalFoundInDay := 0;
   end;
 
+  bGenerateDetail := true;
+  tdJsTemplate:= '';
+  try
+    if(aPar.Values['GenerateDetail'] = 'Yes') then begin
+      Log('GenerateDetail='+aPar.Values['GenerateDetail']);
+       bGenerateDetail := true;
+       
+    end;
+  except
+    bGenerateDetail := true;
+  end;
+
+  if bGenerateDetail then
+    tdJsTemplate:='onmouseover="var desc=this.getElementsByClassName(''dayDesc'')[0]; desc.style.display=''block''; desc.style.position=''absolute'';" onmouseout="this.getElementsByClassName(''dayDesc'')[0].style.display=''none'';"';
+
   bDnySvisle:=(aPar.Values['DaysVertically']='Yes');
   Log('Zmena orientace tabulky - Dny svisle='+IntToStr(bDnySvisle as integer));
-
-
-// TADY DAT EACH
 
   while true do
     begin
@@ -83,14 +97,21 @@ begin
   i:=Geoget_DB.GetTableValue('SELECT count(*) Num FROM geocache gc WHERE gc.dtfound>0 AND '+sCachePrefixForSql+SetSqlFilter(aPar));
   bCond:=((iWidth<700) or (i>2500));
   //inicializace poli
-  for n:=0 to 12*31-1 do a[n]:=0;
+  for n:=0 to 12*31-1 do 
+    begin
+    a[n]:=0;
+    aDdmmDetail[2*31-2]:= '';
+  end;
   //nastavime neplatne dny
-  a[2*31-2]:=-1; a[2*31-1]:=-1; //unor
-  a[4*31-1]:=-1; //duben
-  a[6*31-1]:=-1; //cerven
-  a[9*31-1]:=-1; //zari
-  a[11*31-1]:=-1; //listopad
-  for n:=0 to 31 do aSumaDay[n]:=0;
+  a[2*31-2]:=-1; a[2*31-1]:=-1; aDdmmDetail[2*31-2]:= ''; aDdmmDetail[2*31-1]:= ''; //unor 
+  a[4*31-1]:=-1; aDdmmDetail[4*31-1]:= ''; //duben
+  a[6*31-1]:=-1; aDdmmDetail[6*31-1]:= ''; //cerven
+  a[9*31-1]:=-1; aDdmmDetail[9*31-1]:= ''; //zari
+  a[11*31-1]:=-1; aDdmmDetail[11*31-1]:= '';  //listopad
+  for n:=0 to 31 do begin
+    aSumaDay[n]:=0;
+    aDdmmDetail[n]:= '';
+  end;
   //pokud jsou mesice vodorovne, je osklive, kdyz kazdy mesic ma jinou sirku
   //sloupce podle delky jmena, rozdily jsou znacne (Unor/Prosinec)
   //proto dame vzdy zkratku
@@ -107,15 +128,24 @@ begin
   end;
 
 
-  s:=    'SELECT count(mesic_den) pocet,mesic_den FROM'
+  s:= 'SELECT count(mesic_den) pocet,mesic_den FROM'
     //datum nalezu prevedeme na string YYYY-MM-DD, vypiseme jeho den v tydnu a prevedeme tak, aby 0 bylo pondeli
     +'  (SELECT substr(dtfound,5,2)||"."||substr(dtfound,7,2) AS mesic_den'
     +'    FROM geocache gc WHERE gc.dtfound>0 AND '+sCachePrefixForSql+SetSqlFilter(aPar);
-  s:=s+') x'
+  s:=s+' GROUP BY gc.mesic_den ) x'
     +' GROUP BY mesic_den'
     +' HAVING count(mesic_den) > ' + IntToStr(nMinimalFoundInDay)
     +' ORDER BY mesic_den';
-  Log('SQL='+s);
+
+  s:= ' SELECT count(*),substr(dtfound,5,2)||"."||substr(dtfound,7,2) AS mesic_den,gc.cachetype'
+    +'    FROM geocache gc WHERE gc.dtfound>0 AND '+sCachePrefixForSql+SetSqlFilter(aPar);
+  s:=s+' GROUP BY gc.cachetype,mesic_den'
+    +' HAVING count(*) > ' + IntToStr(nMinimalFoundInDay)
+    +' ORDER BY mesic_den';
+
+  s:= 'SELECT day_types.cnt,found_days.mesic_den,day_types.cachetype  FROM ( SELECT substr(dtfound,5,2)||"."||substr(dtfound,7,2) AS mesic_den FROM geocache gc WHERE gc.dtfound>0 AND  substr(gc.id,1,2)="GC" AND '+sCachePrefixForSql+SetSqlFilter(aPar) +' GROUP BY mesic_den HAVING count(*) > ' + IntToStr(nMinimalFoundInDay) +' ORDER BY mesic_den) as found_days JOIN (SELECT count(*) as cnt,substr(dtfound,5,2)||"."||substr(dtfound,7,2) AS mesic_den,gc.cachetype FROM geocache gc WHERE gc.dtfound>0  AND '+sCachePrefixForSql+SetSqlFilter(aPar) +' GROUP BY gc.cachetype,mesic_den) as day_types ON (found_days.mesic_den = day_types.mesic_den) ORDER BY day_types.cachetype';
+
+  Log('FindsByDay_Run SQL='+s);
   tab:=Geoget_DB.GetTable(s, false);
   try
     while not tab.eof do
@@ -125,7 +155,9 @@ begin
       s:=tab.FieldAsString(1);
       mm:=StrToInt(Fetch(s,'.'))-1;
       dd:=StrToInt(s)-1;
-      a[mm*31+dd]:=n;
+      a[mm*31+dd] := a[mm*31+dd] + n;
+      if bGenerateDetail then 
+        aDdmmDetail[mm*31+dd] := (aDdmmDetail[mm*31+dd]) + '<tr><td><img style="vertical-align:bottom;" src="%IconCacheTypeSmall'+tab.FieldAsString(2)+'%" /></td><td>'+IntToStr(n) +' x</td><td>'+tab.FieldAsString(2)+'</td></tr>';
       tab.Next();
     end;
   finally
@@ -158,7 +190,7 @@ begin
     //sOld:=RegexReplace('font-size[:]\s*\d+',sOld,'font-size:'+s,false);
     sOld:=RegexReplace('font-size[:]\s*\d+(px|%|em|pt)',sOld,'font-size:'+s+'px',false);
   end;
-  Result:=Result+'<div style="margin:0px; padding:0px; overflow:auto;">'+CRLF; //pro rolovani prilis siroke tabulky
+  Result:=Result+'<div class="FindsByDay" style="margin:0px; padding:0px; overflow:auto;">'+CRLF; //pro rolovani prilis siroke tabulky
   Result:=Result+'<table style="'+sOld+'">'+CRLF;
   //vypocty souctu za dny a mesice
   nMaxMes:=0;
@@ -204,13 +236,21 @@ begin
         else if(a[mm*31+dd]=-1) then Result:=Result+'    <td style="%StyleTableMatrixTh2%">&nbsp;</td>'+CRLF
         else begin
           if(a[mm*31+dd]=nMax) and (GlobalVarGet('StyleTableMatrixTdMaxValueText',true)<>'') then begin
-            Result:=Result+'    <td style="%StyleTableMatrixTdMaxValue% background:#'
+            Result:=Result+'    <td '+tdJsTemplate+' style="%StyleTableMatrixTdMaxValue% background:#'
               +ScaleColor(a[mm*31+dd],0,nMax,GlobalVarGet('ColorTableScaleMinBkg',false),GlobalVarGet('ColorTableScaleAvgBkg',false),GlobalVarGet('ColorTableScaleMaxBkg',false))
-              +'">'+IntToStr(a[mm*31+dd])+'</td>'+CRLF;
+              +'">'+IntToStr(a[mm*31+dd]);
+              if bGenerateDetail then
+                Result:=Result+' <div class="dayDesc" style="display:none; border:1px solid #000; padding:4px; text-align: left !important; %StyleTableMatrixTh2%"><table>'+ aDdmmDetail[mm*31+dd] +'</table></div>';
+              Result:=Result+' </td>'+CRLF;
+              aDdmmDetail[mm*31+dd] := ''; // destroy aflter usage
           end
-          else begin Result:=Result+'    <td style="%StyleTableMatrixTd% background:#'
+          else begin Result:=Result+'    <td '+tdJsTemplate+' style="%StyleTableMatrixTd% background:#'
             +ScaleColor(a[mm*31+dd],0,nMax,GlobalVarGet('ColorTableScaleMinBkg',false),GlobalVarGet('ColorTableScaleAvgBkg',false),GlobalVarGet('ColorTableScaleMaxBkg',false))
-            +'">'+IntToStr(a[mm*31+dd])+'</td>'+CRLF;
+            +'">'+IntToStr(a[mm*31+dd]);
+            if bGenerateDetail then
+                Result:=Result+' <div class="dayDesc" style="display:none; border:1px solid #000; padding:4px; text-align: left !important; %StyleTableMatrixTh2%"><table>'+ aDdmmDetail[mm*31+dd] +'</table></div>';
+            Result:=Result+' </td>'+CRLF;
+            aDdmmDetail[mm*31+dd] := ''; // destroy aflter usage
           end;
         end;
       end;
@@ -249,13 +289,20 @@ begin
         else if(a[mm*31+dd]=-1) then Result:=Result+'    <td style="%StyleTableMatrixTh2%">&nbsp;</td>'+CRLF
         else begin
           if(a[mm*31+dd]=nMax) and (GlobalVarGet('StyleTableMatrixTdMaxValueText',true)<>'') then begin
-            Result:=Result+'    <td style="%StyleTableMatrixTdMaxValue% background:#'
-              +ScaleColor(a[mm*31+dd],0,nMax,GlobalVarGet('ColorTableScaleMinBkg',false),GlobalVarGet('ColorTableScaleAvgBkg',false),GlobalVarGet('ColorTableScaleMaxBkg',false))
-              +'">'+IntToStr(a[mm*31+dd])+'</td>'+CRLF;
+            Result:=Result+'    <td '+tdJsTemplate+' style="%StyleTableMatrixTdMaxValue% background:#'+ScaleColor(a[mm*31+dd],0,nMax,GlobalVarGet('ColorTableScaleMinBkg',false),GlobalVarGet('ColorTableScaleAvgBkg',false),GlobalVarGet('ColorTableScaleMaxBkg',false))
+              +'">'+IntToStr(a[mm*31+dd]);
+            if bGenerateDetail then
+                Result:=Result+' <div class="dayDesc" style="display:none; border:1px solid #000; padding:4px; text-align: left !important; %StyleTableMatrixTh2%"><table>'+ aDdmmDetail[mm*31+dd] +'</table></div>';
+            Result:=Result+' </td>'+CRLF;
+            aDdmmDetail[mm*31+dd] := ''; // destroy aflter usage
           end
-          else begin Result:=Result+'    <td style="%StyleTableMatrixTd% background:#'
+          else begin Result:=Result+'    <td '+tdJsTemplate+' style="%StyleTableMatrixTd% background:#'
             +ScaleColor(a[mm*31+dd],0,nMax,GlobalVarGet('ColorTableScaleMinBkg',false),GlobalVarGet('ColorTableScaleAvgBkg',false),GlobalVarGet('ColorTableScaleMaxBkg',false))
-            +'">'+IntToStr(a[mm*31+dd])+'</td>'+CRLF;
+            +'">'+IntToStr(a[mm*31+dd]);
+            if bGenerateDetail then
+                Result:=Result+' <div class="dayDesc" style="display:none; border:1px solid #000; padding:4px; text-align: left !important; %StyleTableMatrixTh2%"><table>'+ aDdmmDetail[mm*31+dd] +'</table></div>';
+            Result:=Result+' </td>'+CRLF;
+            aDdmmDetail[mm*31+dd] := ''; // destroy aflter usage
           end;
         end;
       end;
